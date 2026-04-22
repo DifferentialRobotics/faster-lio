@@ -13,7 +13,7 @@ catkin_make
 ```
 
 ### 2. 配置雷达IP:
-在 [MID360_config.json](livox_ros_driver2/config/MID360_config.json) 中修改 `host_net_info` 下的各ip为自己雷达的ip；修改`lidar_configs` 下的ip为机载电脑与雷达相连接网口的ip
+在 [MID360_config.json](livox_ros_driver2/config/MID360_config.json) 中修改 `host_net_info` 下的各ip为自己雷达的ip；修改`lidar_configs` 下的ip为机载电脑与雷达相连接网口的ip。
 
 
 ### 3. 配置IMU与雷达外参
