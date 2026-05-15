@@ -1,14 +1,14 @@
 common:
     lid_topic: "/livox/lidar"
-    # imu_topic: "/livox/imu"
     imu_topic: "/mavros/imu/data"
+    # imu_topic: "/mavros/imu/data"
 
     time_sync_en: false # ONLY turn on when external time synchronization is really not possible
 
 preprocess:
     lidar_type: 1 # 1 for Livox serials LiDAR, 2 for Velodyne LiDAR, 3 for ouster LiDAR,
     scan_line: 4
-    blind: 1
+    blind: 0.4
     time_scale: 1e-9 # MID-360 uses nanosecond timestamp
 
 mapping:
@@ -19,20 +19,19 @@ mapping:
     fov_degree: 360
     det_range: 100.0
     extrinsic_est_en: false # true: enable the online estimation of IMU-LiDAR extrinsic
-    world_transform_en: true
     
     # ==================== IMU Configuration Options ====================
     # Option 1: /livox/imu
     # extrinsic_T: [-0.011, -0.02329, 0.04412]
     # extrinsic_R: [1, 0, 0, 0, 1, 0, 0, 0, 1]
-    # world_transform_T: [ 0.105614, 0.010778, -0.000389]
-    # world_transform_R: [ 0.9659258, 0, -0.2588190, 0, 1, 0, 0.2588190, 0, 0.9659258]
+    # imu_body_T: [0.094614, -0.012512, 0.0437]
+    # imu_body_R: [ 0.9659258, 0, -0.2588190, 0, 1, 0, 0.2588190, 0, 0.9659258]
     
     # Option 2: /mavros/imu/data
-    extrinsic_T: [0.094614, -0.012512, 0.043731]
-    extrinsic_R: [0.9659258, 0, 0.2588190, 0, 1, 0, -0.2588190, 0, 0.9659258]
-    world_transform_T: [ 0.0, 0.0, 0.0]
-    world_transform_R: [ 1, 0, 0, 0, 1, 0, 0, 0, 1]
+    extrinsic_T: [0.094614, -0.012512, 0.0437]
+    extrinsic_R: [0.9659258, -0, 0.2588190, 0, 1, 0, -0.2588190, 0, 0.9659258]
+    imu_body_T: [ 0.0, 0.0, 0.0]
+    imu_body_R: [ 1, 0, 0, 0, 1, 0, 0, 0, 1]
     # ===================================================================
 
 publish:

@@ -56,6 +56,7 @@ class LaserMapping {
     ////////////////////////////// debug save / show ////////////////////////////////////////////////////////////////
     void PublishPath(const ros::Publisher pub_path);
     void PublishOdometry(const ros::Publisher &pub_odom_aft_mapped);
+    void PublishOdometryBody(const ros::Publisher &pub_odom_body_mapped);
     void PublishFrameWorld();
     void PublishFrameBody(const ros::Publisher &pub_laser_cloud_body);
     void PublishFrameEffectWorld(const ros::Publisher &pub_laser_cloud_effect_world);
@@ -103,11 +104,11 @@ class LaserMapping {
     std::vector<double> extrinR_{9, 0.0};  // lidar-imu rotation
     std::string map_file_path_;
     
-    /// world coordinate transformation
-    bool world_transform_en_ = false;                 // enable world coordinate transformation
-    std::vector<double> world_transform_T_{3, 0.0};   // world frame translation
-    std::vector<double> world_transform_R_{9, 0.0};   // world frame rotation
-    Eigen::Matrix4d world_transform_matrix_;          // combined 4x4 transformation matrix
+    /// imu_body transformation
+    std::vector<double> imu_body_T_;
+    std::vector<double> imu_body_R_;
+    Eigen::Vector3d t_I_B_ = Eigen::Vector3d::Zero();
+    Eigen::Matrix3d R_I_B_ = Eigen::Matrix3d::Identity();
 
     /// point clouds data
     CloudPtr scan_undistort_{new PointCloudType()};   // scan after undistortion
@@ -128,8 +129,10 @@ class LaserMapping {
     ros::Publisher pub_laser_cloud_body_;
     ros::Publisher pub_laser_cloud_effect_world_;
     ros::Publisher pub_odom_aft_mapped_;
+    ros::Publisher pub_odom_body_mapped_;
     ros::Publisher pub_path_;
     std::string tf_imu_frame_;
+    std::string tf_body_frame_;
     std::string tf_world_frame_;
 
     std::mutex mtx_buffer_;
@@ -137,6 +140,7 @@ class LaserMapping {
     std::deque<PointCloudType::Ptr> lidar_buffer_;
     std::deque<sensor_msgs::Imu::ConstPtr> imu_buffer_;
     nav_msgs::Odometry odom_aft_mapped_;
+    nav_msgs::Odometry odom_body_mapped_;
 
     /// options
     bool time_sync_en_ = false;

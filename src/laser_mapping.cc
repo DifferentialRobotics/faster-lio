@@ -64,7 +64,7 @@ bool LaserMapping::LoadParams(ros::NodeHandle &nh) {
     nh.param<bool>("publish/dense_publish_en", dense_pub_en_, false);
     nh.param<bool>("publish/scan_bodyframe_pub_en", scan_body_pub_en_, true);
     nh.param<bool>("publish/scan_effect_pub_en", scan_effect_pub_en_, false);
-    nh.param<std::string>("publish/tf_imu_frame", tf_imu_frame_, "body");
+    nh.param<std::string>("publish/tf_imu_frame", tf_imu_frame_, "imu");
     nh.param<std::string>("publish/tf_world_frame", tf_world_frame_, "world");
 
     nh.param<int>("max_iteration", options::NUM_MAX_ITERATIONS, 4);
@@ -91,15 +91,27 @@ bool LaserMapping::LoadParams(ros::NodeHandle &nh) {
     nh.param<int>("pcd_save/interval", pcd_save_interval_, -1);
     nh.param<std::vector<double>>("mapping/extrinsic_T", extrinT_, std::vector<double>());
     nh.param<std::vector<double>>("mapping/extrinsic_R", extrinR_, std::vector<double>());
-    nh.param<bool>("mapping/world_transform_en", world_transform_en_, false);
-    if (world_transform_en_) {
-        nh.param<std::vector<double>>("mapping/world_transform_T", world_transform_T_, std::vector<double>());
-        nh.param<std::vector<double>>("mapping/world_transform_R", world_transform_R_, std::vector<double>());
-        LOG(INFO) << "World coordinate transformation enabled";
-    }
+
+    nh.param<std::string>("publish/tf_body_frame", tf_body_frame_, "body");
+    nh.param<std::vector<double>>("mapping/imu_body_T", imu_body_T_, std::vector<double>{0.0, 0.0, 0.0});
+    nh.param<std::vector<double>>("mapping/imu_body_R", imu_body_R_, std::vector<double>{1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0});
 
     nh.param<float>("ivox_grid_resolution", ivox_options_.resolution_, 0.2);
     nh.param<int>("ivox_nearby_type", ivox_nearby_type, 18);
+
+    if (imu_body_T_.size() != 3 || imu_body_R_.size() != 9) {
+        LOG(ERROR) << "Invalid imu_body_T or imu_body_R size";
+        return false;
+    }
+
+    R_I_B_ << imu_body_R_[0], imu_body_R_[1], imu_body_R_[2],
+            imu_body_R_[3], imu_body_R_[4], imu_body_R_[5],
+            imu_body_R_[6], imu_body_R_[7], imu_body_R_[8];
+
+    t_I_B_ << imu_body_T_[0], imu_body_T_[1], imu_body_T_[2];
+
+    LOG(INFO) << "imu_body_R:\n" << R_I_B_;
+    LOG(INFO) << "imu_body_T: " << t_I_B_.transpose();
 
     LOG(INFO) << "lidar_type " << lidar_type;
     if (lidar_type == 1) {
@@ -146,10 +158,6 @@ bool LaserMapping::LoadParams(ros::NodeHandle &nh) {
     p_imu_->SetGyrBiasCov(common::V3D(b_gyr_cov, b_gyr_cov, b_gyr_cov));
     p_imu_->SetAccBiasCov(common::V3D(b_acc_cov, b_acc_cov, b_acc_cov));
 
-    if (world_transform_en_) {
-        BuildWorldTransformMatrix();
-    }
-
     return true;
 }
 
@@ -168,7 +176,7 @@ bool LaserMapping::LoadParamsFromYAML(const std::string &yaml_file) {
         dense_pub_en_ = yaml["publish"]["dense_publish_en"].as<bool>();
         scan_body_pub_en_ = yaml["publish"]["scan_bodyframe_pub_en"].as<bool>();
         scan_effect_pub_en_ = yaml["publish"]["scan_effect_pub_en"].as<bool>();
-        tf_imu_frame_ = yaml["publish"]["tf_imu_frame"].as<std::string>("body");
+        tf_imu_frame_ = yaml["publish"]["tf_imu_frame"].as<std::string>("imu");
         tf_world_frame_ = yaml["publish"]["tf_world_frame"].as<std::string>("camera_init");
         path_save_en_ = yaml["path_save_en"].as<bool>();
 
@@ -195,12 +203,17 @@ bool LaserMapping::LoadParamsFromYAML(const std::string &yaml_file) {
         pcd_save_interval_ = yaml["pcd_save"]["interval"].as<int>();
         extrinT_ = yaml["mapping"]["extrinsic_T"].as<std::vector<double>>();
         extrinR_ = yaml["mapping"]["extrinsic_R"].as<std::vector<double>>();
-        world_transform_en_ = yaml["mapping"]["world_transform_en"].as<bool>(false);
-        if (world_transform_en_) {
-            world_transform_T_ = yaml["mapping"]["world_transform_T"].as<std::vector<double>>();
-            world_transform_R_ = yaml["mapping"]["world_transform_R"].as<std::vector<double>>();
-            LOG(INFO) << "World coordinate transformation enabled";
-        }
+        tf_body_frame_ = yaml["publish"]["tf_body_frame"].as<std::string>("body");
+
+        imu_body_T_ = yaml["mapping"]["imu_body_T"] ?
+                    yaml["mapping"]["imu_body_T"].as<std::vector<double>>() :
+                    std::vector<double>{0.0, 0.0, 0.0};
+
+        imu_body_R_ = yaml["mapping"]["imu_body_R"] ?
+                    yaml["mapping"]["imu_body_R"].as<std::vector<double>>() :
+                    std::vector<double>{1.0, 0.0, 0.0,
+                                        0.0, 1.0, 0.0,
+                                        0.0, 0.0, 1.0};
 
         ivox_options_.resolution_ = yaml["ivox_grid_resolution"].as<float>();
         ivox_nearby_type = yaml["ivox_nearby_type"].as<int>();
@@ -208,6 +221,20 @@ bool LaserMapping::LoadParamsFromYAML(const std::string &yaml_file) {
         LOG(ERROR) << "bad conversion";
         return false;
     }
+
+    if (imu_body_T_.size() != 3 || imu_body_R_.size() != 9) {
+        LOG(ERROR) << "Invalid imu_body_T or imu_body_R size";
+        return false;
+    }
+
+    R_I_B_ << imu_body_R_[0], imu_body_R_[1], imu_body_R_[2],
+            imu_body_R_[3], imu_body_R_[4], imu_body_R_[5],
+            imu_body_R_[6], imu_body_R_[7], imu_body_R_[8];
+
+    t_I_B_ << imu_body_T_[0], imu_body_T_[1], imu_body_T_[2];
+
+    LOG(INFO) << "imu_body_R:\n" << R_I_B_;
+    LOG(INFO) << "imu_body_T: " << t_I_B_.transpose();
 
     LOG(INFO) << "lidar_type " << lidar_type;
     if (lidar_type == 1) {
@@ -250,10 +277,6 @@ bool LaserMapping::LoadParamsFromYAML(const std::string &yaml_file) {
     p_imu_->SetAccCov(common::V3D(acc_cov, acc_cov, acc_cov));
     p_imu_->SetGyrBiasCov(common::V3D(b_gyr_cov, b_gyr_cov, b_gyr_cov));
     p_imu_->SetAccBiasCov(common::V3D(b_acc_cov, b_acc_cov, b_acc_cov));
-    
-    if (world_transform_en_) {
-        BuildWorldTransformMatrix();
-    }
 
     run_in_offline_ = true;
     return true;
@@ -284,6 +307,7 @@ void LaserMapping::SubAndPubToROS(ros::NodeHandle &nh) {
     pub_laser_cloud_body_ = nh.advertise<sensor_msgs::PointCloud2>("/laserMapping/cloud_registered_body", 100000);
     pub_laser_cloud_effect_world_ = nh.advertise<sensor_msgs::PointCloud2>("/laserMapping/cloud_registered_effect_world", 100000);
     pub_odom_aft_mapped_ = nh.advertise<nav_msgs::Odometry>("/laserMapping/odometry", 100000);
+    pub_odom_body_mapped_ = nh.advertise<nav_msgs::Odometry>("/laserMapping/odometry_body", 100000);
     pub_path_ = nh.advertise<nav_msgs::Path>("/laserMapping/path", 100000);
 }
 
@@ -368,6 +392,9 @@ void LaserMapping::Run() {
     } else {
         if (pub_odom_aft_mapped_) {
             PublishOdometry(pub_odom_aft_mapped_);
+        }
+        if (pub_odom_body_mapped_) {
+            PublishOdometryBody(pub_odom_body_mapped_);
         }
         if (path_pub_en_ || path_save_en_) {
             PublishPath(pub_path_);
@@ -701,30 +728,6 @@ void LaserMapping::PublishPath(const ros::Publisher pub_path) {
     SetPosestamp(msg_body_pose_);
     msg_body_pose_.header.stamp = ros::Time().fromSec(lidar_end_time_);
     msg_body_pose_.header.frame_id = tf_world_frame_;
-    
-    if (world_transform_en_) {
-        Timer::Evaluate(
-            [&, this]() {
-                Eigen::Vector3d pos(msg_body_pose_.pose.position.x,
-                                   msg_body_pose_.pose.position.y,
-                                   msg_body_pose_.pose.position.z);
-                Eigen::Quaterniond quat(msg_body_pose_.pose.orientation.w,
-                                       msg_body_pose_.pose.orientation.x,
-                                       msg_body_pose_.pose.orientation.y,
-                                       msg_body_pose_.pose.orientation.z);
-                
-                ApplyWorldTransform(pos, quat);
-                
-                msg_body_pose_.pose.position.x = pos.x();
-                msg_body_pose_.pose.position.y = pos.y();
-                msg_body_pose_.pose.position.z = pos.z();
-                msg_body_pose_.pose.orientation.w = quat.w();
-                msg_body_pose_.pose.orientation.x = quat.x();
-                msg_body_pose_.pose.orientation.y = quat.y();
-                msg_body_pose_.pose.orientation.z = quat.z();
-            },
-            "World Transform (Path)");
-    }
 
     /*** if path is too large, the rvis will crash ***/
     path_.poses.push_back(msg_body_pose_);
@@ -739,31 +742,6 @@ void LaserMapping::PublishOdometry(const ros::Publisher &pub_odom_aft_mapped) {
     odom_aft_mapped_.header.stamp = ros::Time().fromSec(lidar_end_time_);  // ros::Time().fromSec(lidar_end_time_);
     SetPosestamp(odom_aft_mapped_.pose);
     
-    if (world_transform_en_) {
-        Timer::Evaluate(
-            [&, this]() {
-                Eigen::Vector3d pos(odom_aft_mapped_.pose.pose.position.x,
-                                   odom_aft_mapped_.pose.pose.position.y,
-                                   odom_aft_mapped_.pose.pose.position.z);
-                Eigen::Quaterniond quat(odom_aft_mapped_.pose.pose.orientation.w,
-                                       odom_aft_mapped_.pose.pose.orientation.x,
-                                       odom_aft_mapped_.pose.pose.orientation.y,
-                                       odom_aft_mapped_.pose.pose.orientation.z);
-                
-                ApplyWorldTransform(pos, quat);
-                
-                odom_aft_mapped_.pose.pose.position.x = pos.x();
-                odom_aft_mapped_.pose.pose.position.y = pos.y();
-                odom_aft_mapped_.pose.pose.position.z = pos.z();
-                odom_aft_mapped_.pose.pose.orientation.w = quat.w();
-                odom_aft_mapped_.pose.pose.orientation.x = quat.x();
-                odom_aft_mapped_.pose.pose.orientation.y = quat.y();
-                odom_aft_mapped_.pose.pose.orientation.z = quat.z();
-            },
-            "World Transform (Odometry)");
-    }
-    
-    pub_odom_aft_mapped.publish(odom_aft_mapped_);
     auto P = kf_.get_P();
     for (int i = 0; i < 6; i++) {
         int k = i < 3 ? i + 3 : i - 3;
@@ -774,6 +752,7 @@ void LaserMapping::PublishOdometry(const ros::Publisher &pub_odom_aft_mapped) {
         odom_aft_mapped_.pose.covariance[i * 6 + 4] = P(k, 1);
         odom_aft_mapped_.pose.covariance[i * 6 + 5] = P(k, 2);
     }
+    pub_odom_aft_mapped.publish(odom_aft_mapped_);
 
     static tf::TransformBroadcaster br;
     tf::Transform transform;
@@ -786,6 +765,63 @@ void LaserMapping::PublishOdometry(const ros::Publisher &pub_odom_aft_mapped) {
     q.setZ(odom_aft_mapped_.pose.pose.orientation.z);
     transform.setRotation(q);
     br.sendTransform(tf::StampedTransform(transform, odom_aft_mapped_.header.stamp, tf_world_frame_, tf_imu_frame_));
+}
+
+void LaserMapping::PublishOdometryBody(const ros::Publisher &pub_odom_body_mapped) {
+    odom_body_mapped_.header.frame_id = tf_world_frame_;
+    odom_body_mapped_.child_frame_id = tf_body_frame_;
+    odom_body_mapped_.header.stamp = ros::Time().fromSec(lidar_end_time_);
+
+    const Eigen::Quaterniond q_W_I = state_point_.rot;
+    const Eigen::Vector3d t_W_I = state_point_.pos;
+
+    Eigen::Quaterniond q_I_B(R_I_B_);
+    q_I_B.normalize();
+
+    Eigen::Quaterniond q_W_B = q_W_I * q_I_B;
+    q_W_B.normalize();
+
+    Eigen::Vector3d t_W_B = t_W_I + q_W_I * t_I_B_;
+
+    odom_body_mapped_.pose.pose.position.x = t_W_B.x();
+    odom_body_mapped_.pose.pose.position.y = t_W_B.y();
+    odom_body_mapped_.pose.pose.position.z = t_W_B.z();
+
+    odom_body_mapped_.pose.pose.orientation.w = q_W_B.w();
+    odom_body_mapped_.pose.pose.orientation.x = q_W_B.x();
+    odom_body_mapped_.pose.pose.orientation.y = q_W_B.y();
+    odom_body_mapped_.pose.pose.orientation.z = q_W_B.z();
+
+    auto P = kf_.get_P();
+    for (int i = 0; i < 6; i++) {
+        int k = i < 3 ? i + 3 : i - 3;
+        odom_body_mapped_.pose.covariance[i * 6 + 0] = P(k, 3);
+        odom_body_mapped_.pose.covariance[i * 6 + 1] = P(k, 4);
+        odom_body_mapped_.pose.covariance[i * 6 + 2] = P(k, 5);
+        odom_body_mapped_.pose.covariance[i * 6 + 3] = P(k, 0);
+        odom_body_mapped_.pose.covariance[i * 6 + 4] = P(k, 1);
+        odom_body_mapped_.pose.covariance[i * 6 + 5] = P(k, 2);
+    }
+
+    pub_odom_body_mapped.publish(odom_body_mapped_);
+
+    static tf::TransformBroadcaster br_body;
+    tf::Transform transform_body;
+    tf::Quaternion q_body;
+
+    transform_body.setOrigin(tf::Vector3(t_W_B.x(), t_W_B.y(), t_W_B.z()));
+    q_body.setW(q_W_B.w());
+    q_body.setX(q_W_B.x());
+    q_body.setY(q_W_B.y());
+    q_body.setZ(q_W_B.z());
+    transform_body.setRotation(q_body);
+
+    br_body.sendTransform(tf::StampedTransform(
+        transform_body,
+        odom_body_mapped_.header.stamp,
+        tf_world_frame_,
+        tf_body_frame_
+    ));
 }
 
 void LaserMapping::PublishFrameWorld() {
@@ -803,16 +839,6 @@ void LaserMapping::PublishFrameWorld() {
         }
     } else {
         laserCloudWorld = scan_down_world_;
-    }
-
-    if (world_transform_en_) {
-        Timer::Evaluate(
-            [&, this]() {
-                for (auto &pt : laserCloudWorld->points) {
-                    ApplyWorldTransformPointCloudOnly(&pt);
-                }
-            },
-            "World Transform (PointCloud)");
     }
 
     if (run_in_offline_ == false && scan_pub_en_) {
@@ -856,7 +882,7 @@ void LaserMapping::PublishFrameBody(const ros::Publisher &pub_laser_cloud_body) 
     sensor_msgs::PointCloud2 laserCloudmsg;
     pcl::toROSMsg(*laser_cloud_imu_body, laserCloudmsg);
     laserCloudmsg.header.stamp = ros::Time().fromSec(lidar_end_time_);
-    laserCloudmsg.header.frame_id = "body";
+    laserCloudmsg.header.frame_id = tf_imu_frame_;
     pub_laser_cloud_body.publish(laserCloudmsg);
     publish_count_ -= options::PUBFRAME_PERIOD;
 }
@@ -936,45 +962,6 @@ void LaserMapping::PointBodyLidarToIMU(PointType const *const pi, PointType *con
     po->y = p_body_imu(1);
     po->z = p_body_imu(2);
     po->intensity = pi->intensity;
-}
-
-void LaserMapping::BuildWorldTransformMatrix() {
-
-    Eigen::Matrix3d R;
-    R << world_transform_R_[0], world_transform_R_[1], world_transform_R_[2],
-         world_transform_R_[3], world_transform_R_[4], world_transform_R_[5],
-         world_transform_R_[6], world_transform_R_[7], world_transform_R_[8];
-    
-    Eigen::Vector3d T(world_transform_T_[0], world_transform_T_[1], world_transform_T_[2]);
-    
-    world_transform_matrix_ = Eigen::Matrix4d::Identity();
-    world_transform_matrix_.block<3, 3>(0, 0) = R;
-    world_transform_matrix_.block<3, 1>(0, 3) = T;
-}
-
-void LaserMapping::ApplyWorldTransform(Eigen::Vector3d &pos, Eigen::Quaterniond &quat) {
-    if (!world_transform_en_) {
-        return;
-    }
-
-    Eigen::Matrix3d R_world = world_transform_matrix_.block<3, 3>(0, 0);
-    Eigen::Vector3d T_world = world_transform_matrix_.block<3, 1>(0, 3);
-
-    pos = R_world * pos + T_world;
-    Eigen::Quaterniond q_world(R_world);
-    quat = q_world * quat;
-}
-
-void LaserMapping::ApplyWorldTransformPointCloudOnly(PointType *const pt) {
-    if (!world_transform_en_) {
-        return;
-    }
-
-    Eigen::Vector3d T_world = world_transform_matrix_.block<3, 1>(0, 3);
-    
-    pt->x += T_world.x();
-    pt->y += T_world.y();
-    pt->z += T_world.z();
 }
 
 void LaserMapping::Finish() {
