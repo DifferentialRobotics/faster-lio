@@ -56,7 +56,6 @@ roslaunch mavros px4.launch #若使用飞控imu
 roslaunch faster_lio mapping_mid360.launch
 roslaunch ekf ekf_lidar.launch #将里程计数据频率提高为200Hz
 ```
-其中ekf功能包包含在仓库 [Diff-Planner](https://github.com/DifferentialRobotics/Diff-Planner) 中。
 
 ## 致谢
 本功能包基于 **[Faster-LIO](https://github.com/gaoxiang12/faster-lio)** 实现并集成了 **[livox_ros_driver2](https://github.com/Livox-SDK/livox_ros_driver2)** 驱动包，特此感谢两个项目作者团队的开源贡献。
